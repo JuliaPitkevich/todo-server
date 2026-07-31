@@ -1,0 +1,79 @@
+### Create file
+GET  http://localhost:5000/createFile
+
+### Delete file
+DELETE  http://localhost:5000/deleteFile
+
+
+### Add user
+POST http://localhost:5000/registration
+Content-type: application/json
+
+{
+    "email": "test@gmail.com",
+    "password": "123465678"
+}
+
+### Loogin
+# @name login
+POST http://localhost:5000/login
+Content-type: application/json
+
+{
+    "email": "test@gmail.com",
+    "password": "123465678"
+}
+
+
+
+@token = {{login.response.body.token}}
+
+### Read file
+GET  http://localhost:5000/readFile
+Authorization: Bearer {{token}}
+
+### Write file
+POST  http://localhost:5000/changeFile
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+    "title": "Buy milk"
+}
+
+### Add another task
+POST http://localhost:5000/changeFile
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+    "title": "Learn Sentry24525452"
+}
+
+### get task by Id
+GET http://localhost:5000/tasks/82d9cbe8-1bda-420a-ab13-72678e49448b
+Authorization: Bearer {{token}}
+
+
+### Change title
+PUT http://localhost:5000/tasks/82d9cbe8-1bda-420a-ab13-72678e49448b
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+    "title": "Buy organic milk"
+}
+
+### Toggle done
+PATCH http://localhost:5000/tasks/82d9cbe8-1bda-420a-ab13-72678e49448b
+Authorization: Bearer {{token}}
+
+### Delete task
+DELETE http://localhost:5000/tasks/82d9cbe8-1bda-420a-ab13-72678e49448b
+Authorization: Bearer {{token}}
+
+### Test Sentry
+GET http://localhost:5000/test-sentry
+
+### Check without token
+GET http://localhost:5000/readFile
