@@ -26,10 +26,26 @@ app.use(Sentry.Handlers.requestHandler());
 app.use(express.json());
 console.log("мой путь", __dirname);
 
-app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
-console.log("Swagger docs available at http://localhost:5000/api-docs");
 
 app.use(cors());
+
+app.get('/', (req, res) => {
+  res.json({
+    message: 'Todo API is running!',
+    server: process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`,
+    endpoints: {
+      docs: '/api-docs',
+      registration: 'POST /registration',
+      login: 'POST /login',
+      tasks: 'GET /readFile',
+      create: 'POST /changeFile',
+      task: 'GET/PUT/PATCH/DELETE /tasks/:id'
+    }
+  });
+});
+
+app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
+console.log("Swagger docs available at http://localhost:5000/api-docs");
 
 const DB = path.join(__dirname, "db.json");
 const PORT = process.env.PORT || 5000;
