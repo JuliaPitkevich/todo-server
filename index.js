@@ -8,6 +8,7 @@ const path = require("path");
 const jwt = require("jsonwebtoken");
 const swaggerUi = require("swagger-ui-express");
 const swaggerSpec = require("./swagger");
+const cors = require('cors');
 
 const {
   validateCreateTask,
@@ -27,6 +28,8 @@ console.log("мой путь", __dirname);
 
 app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 console.log("Swagger docs available at http://localhost:5000/api-docs");
+
+app.use(cors());
 
 const DB = path.join(__dirname, "db.json");
 const PORT = process.env.PORT || 5000;
