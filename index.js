@@ -1,14 +1,20 @@
 require('dotenv').config();
 const Sentry = require("./instrument.js");
 const bcrypt = require("bcryptjs");
-const { log } = require("console");
 const express = require("express");
-const fs = require("fs/promises");
-const path = require("path");
 const jwt = require("jsonwebtoken");
 const swaggerUi = require("swagger-ui-express");
 const swaggerSpec = require("./swagger");
 const cors = require('cors');
+const { randomUUID } = require("crypto");
+const { ObjectId } = require('mongodb');
+
+const {
+  connectToDatabase,
+  getUsersCollection,
+  getTasksCollection,
+  closeDatabaseConnection
+} = require('./db');
 
 const {
   validateCreateTask,
@@ -17,17 +23,25 @@ const {
   validateGetTask,
   validateDeleteTask,
   validateGetTasks,
+  validateRegistration,
+  validateLogin,
   handleValidationErrors,
 } = require("./validators");
-const { randomUUID } = require("crypto");
 
 const app = express();
 app.use(Sentry.Handlers.requestHandler());
 app.use(express.json());
-console.log("мой путь", __dirname);
 
 
 app.use(cors());
+
+
+app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
+console.log("Swagger docs available at http://localhost:5000/api-docs");
+
+const PORT = process.env.PORT || 5000;
+const SECRET = process.env.JWT_SECRET;
+
 
 app.get('/', (req, res) => {
   res.json({
@@ -43,13 +57,6 @@ app.get('/', (req, res) => {
     }
   });
 });
-
-app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
-console.log("Swagger docs available at http://localhost:5000/api-docs");
-
-const DB = path.join(__dirname, "db.json");
-const PORT = process.env.PORT || 5000;
-const SECRET = process.env.JWT_SECRET;
 
 function signToken(user) {
   return jwt.sign({ id: user.id, email: user.email }, SECRET, {
@@ -79,6 +86,8 @@ function auth(req, res, next) {
       .json({ error: expired ? "Token is expired" : "Token is invalid" });
   }
 }
+
+connectToDatabase().catch(console.error);
 
 /**
  * @swagger
@@ -114,22 +123,25 @@ function auth(req, res, next) {
  *             schema:
  *               $ref: '#/components/schemas/ErrorResponse'
  */
-app.post("/registration", async (req, res) => {
-  const { email, password } = req.body;
+app.post('/registration', validateRegistration(), handleValidationErrors, async (req, res) => {
+  try {
+    const { name, email, password } = req.body;
+    const users = await getUsersCollection();
 
-  const data = await fs.readFile(DB, "utf-8");
-  const db = JSON.parse(data);
+    const user = {
+      id: randomUUID(),
+      name,
+      email,
+      password: await bcrypt.hash(password, 10),
+    };
 
-  const user = {
-    id: randomUUID(),
-    email,
-    password: await bcrypt.hash(password, 10),
-  };
-
-  db.users.push(user);
-  await fs.writeFile(DB, JSON.stringify(db, null, 2), { flag: "w" });
-  res.status(201).json({ id: user.id, email: user.email });
-});
+    const response = await users.insertOne(user)
+    res.status(201).json({ id: response.insertedId, name, email });
+  } catch (error) {
+    console.error('Registration error:', error);
+    res.status(500).json({ error: "Registration failed" });
+  }
+})
 
 /**
  * @swagger
@@ -165,107 +177,24 @@ app.post("/registration", async (req, res) => {
  *             schema:
  *               $ref: '#/components/schemas/ErrorResponse'
  */
-app.post("/login", async (req, res) => {
-  const { email, password } = req.body;
-
-  const data = await fs.readFile(DB, "utf-8");
-  const db = JSON.parse(data);
-
-  const user = db.users.find((item) => item.email === email);
-  const pass = await bcrypt.compare(password, user.password);
-
-  if (!user || !pass)
-    return res.status(401).json({ error: "Wrong email or password" });
-  res.json({ token: signToken(user) });
-});
-
-/**
- * @swagger
- * /createFile:
- *   get:
- *     summary: Создать файл базы данных
- *     description: Создает новый файл db.json с пустыми массивами tasks и users
- *     tags:
- *       - System
- *     responses:
- *       200:
- *         description: Файл успешно создан
- *         content:
- *           text/plain:
- *             schema:
- *               type: string
- *               example: File created!
- *       400:
- *         description: Файл уже существует
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/ErrorResponse'
- *       500:
- *         description: Ошибка создания файла
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/ErrorResponse'
- */
-app.get("/createFile", async (req, res) => {
-  console.log("Method GET/createFile");
+app.post("/login", validateLogin(), handleValidationErrors, async (req, res) => {
   try {
-    await fs.writeFile(DB, JSON.stringify({ tasks: [], users: [] }, null, 2), {
-      flag: "wx",
-    });
-    res.send("File created!");
+    const { email, password } = req.body;
+
+    const users = await getUsersCollection();
+    const user = await users.findOne({ email });
+
+    const pass = await bcrypt.compare(password, user.password);
+
+    if (!user || !pass)
+      return res.status(401).json({ error: "Wrong email or password" });
+    res.json({ token: signToken(user) });
   } catch (error) {
-    if (error.code === "EEXIST") {
-      res.status(400).json({ error: "File already exists" });
-    } else {
-      res.status(500).json({ error: "Failed to create file" });
-    }
+    console.error('Login error:', error);
+    res.status(500).json({ error: "Login failed" });
   }
 });
 
-/**
- * @swagger
- * /deleteFile:
- *   delete:
- *     summary: Удалить файл базы данных
- *     description: Полностью удаляет файл db.json
- *     tags:
- *       - System
- *     responses:
- *       200:
- *         description: Файл удален
- *         content:
- *           text/plain:
- *             schema:
- *               type: string
- *               example: File deleted!
- *       404:
- *         description: Файл не найден
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/ErrorResponse'
- *       500:
- *         description: Ошибка удаления файла
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/ErrorResponse'
- */
-app.delete("/deleteFile", async (req, res) => {
-  console.log("Method Delete");
-  try {
-    await fs.unlink(DB);
-    res.send("File deleted!");
-  } catch (error) {
-    if (error.code === "ENOENT") {
-      res.status(404).json({ error: "File not found" });
-    } else {
-      res.status(500).json({ error: "Failed to delete file" });
-    }
-  }
-});
 
 /**
  * @swagger
@@ -303,30 +232,22 @@ app.delete("/deleteFile", async (req, res) => {
  *             schema:
  *               $ref: '#/components/schemas/ErrorResponse'
  */
-app.get(
-  "/readFile",
-  auth,
-  validateGetTasks,
-  handleValidationErrors,
+app.get("/tasks", auth, validateGetTasks, handleValidationErrors,
   async (req, res) => {
-    console.log("Method GET/readFile");
     try {
-      const data = await fs.readFile(DB, "utf-8");
-      const allTasks = JSON.parse(data);
-      let tasks = allTasks.tasks.filter((task) => task.userId === req.user.id);
+      const tasksCollection = await getTasksCollection();
+
+      const filter = { userId: req.user.id };
 
       if (req.query.completed !== undefined) {
-        const filterValue = req.query.completed === "true";
-        tasks = tasks.filter((task) => task.completed === filterValue);
+        filter.completed = req.query.completed === 'true';
       }
+
+      const tasks = await tasksCollection.find(filter).toArray();
 
       res.json(tasks);
     } catch (error) {
-      if (error.code === "ENOENT") {
-        res.json([]);
-      } else {
-        res.status(500).json({ error: "Failed to read file" });
-      }
+      res.status(500).json({ error: "Failed to read tasks" });
     }
   },
 );
@@ -379,41 +300,36 @@ app.get(
  *             schema:
  *               $ref: '#/components/schemas/ErrorResponse'
  */
-app.post(
-  "/changeFile",
-  auth,
-  validateCreateTask,
-  handleValidationErrors,
+app.post("/tasks", auth, validateCreateTask, handleValidationErrors,
   async (req, res) => {
-    console.log("Method POST", req.body);
     try {
       const { title } = req.body;
-      const row = await fs.readFile(DB, "utf-8");
-      const db = JSON.parse(row);
+      const tasksCollection = await getTasksCollection();
       const newTask = {
-        id: crypto.randomUUID(),
         userId: req.user.id,
         title: title.trim(),
-        completed: false,
-        createdAt: new Date().toISOString(),
+        completed: false
       };
-      db.tasks.push(newTask);
 
-      await fs.writeFile(DB, JSON.stringify(db, null, 2), { flag: "w" });
+      await tasksCollection.insertOne(newTask);
       res.status(201).json({
         message: "Task created!",
         task: newTask,
       });
     } catch (error) {
-      if (error.code === "ENOENT") {
-        return res
-          .status(404)
-          .json({ error: "Database file not found. Run /createFile first" });
-      }
       res.status(500).json({ error: "Failed to create task" });
     }
   },
 );
+
+function getObjectId(id, res) {
+  try {
+    return new ObjectId(id);
+  } catch (error) {
+    res.status(400).json({ error: "Invalid task ID format" });
+    return null;
+  }
+}
 
 /**
  * @swagger
@@ -465,18 +381,18 @@ app.post(
  *             schema:
  *               $ref: '#/components/schemas/ErrorResponse'
  */
-app.get(
-  "/tasks/:id",
-  auth,
-  validateGetTask,
-  handleValidationErrors,
+app.get("/tasks/:id", auth, validateGetTask, handleValidationErrors,
   async (req, res) => {
-    console.log("Method GET /tasks/:id", req.params.id);
     try {
-      const { id } = req.params;
-      const data = await fs.readFile(DB, "utf-8");
-      const allTasks = JSON.parse(data);
-      const task = allTasks.tasks.find((task) => task.id === id);
+      const tasksCollection = await getTasksCollection();
+
+      const objectId = getObjectId(req.params.id, res);
+      if (!objectId) return;
+
+      const task = await tasksCollection.findOne({
+        _id: objectId,
+        userId: req.user.id
+      });
 
       if (!task) {
         return res.status(404).json({ error: "Task not found" });
@@ -488,9 +404,6 @@ app.get(
 
       res.json(task);
     } catch (error) {
-      if (error.code === "ENOENT") {
-        return res.status(404).json({ error: "Database file not found" });
-      }
       res.status(500).json({ error: "Failed to read task" });
     }
   },
@@ -564,37 +477,42 @@ app.get(
  *             schema:
  *               $ref: '#/components/schemas/ErrorResponse'
  */
-app.put(
-  "/tasks/:id",
-  auth,
-  validateReplaceTask,
-  handleValidationErrors,
+app.put("/tasks/:id", auth, validateReplaceTask, handleValidationErrors,
   async (req, res) => {
-    console.log("Method PUT", req.params.id);
     try {
-      const { id } = req.params;
       const { title } = req.body;
+      const tasksCollection = await getTasksCollection();
 
-      const data = await fs.readFile(DB, "utf-8");
-      const allTasks = JSON.parse(data);
-      const taskIndex = allTasks.tasks.findIndex((task) => task.id === id);
+      const objectId = getObjectId(req.params.id, res);
+      if (!objectId) return;
 
-      if (taskIndex === -1) {
-        return res.status(404).json({ error: "Task not found" });
-      }
+      const result = await tasksCollection.findOneAndUpdate(
+        {
+          _id: objectId,
+          userId: req.user.id
+        },
+        {
+          $set: {
+            title: title.trim()
+          }
+        },
+        { returnDocument: 'after' }
+      );
 
-      if (allTasks.tasks[taskIndex].userId !== req.user.id) {
+      if (!result) {
+        const taskExists = await tasksCollection.findOne({
+          _id: objectId
+        });
+
+        if (!taskExists) {
+          return res.status(404).json({ error: "Task not found" });
+        }
+
         return res.status(403).json({ error: "Access denied" });
       }
 
-      allTasks.tasks[taskIndex].title = title;
-      await fs.writeFile(DB, JSON.stringify(allTasks, null, 2));
-
-      res.json(allTasks.tasks[taskIndex]);
+      res.json(result);
     } catch (error) {
-      if (error.code === "ENOENT") {
-        return res.status(404).json({ error: "Database file not found" });
-      }
       res.status(500).json({ error: "Failed to update task" });
     }
   },
@@ -659,32 +577,40 @@ app.put(
  *             schema:
  *               $ref: '#/components/schemas/ErrorResponse'
  */
-app.patch(
-  "/tasks/:id",
-  auth,
-  validatePatchTask,
-  handleValidationErrors,
+app.patch("/tasks/:id", auth, validatePatchTask, handleValidationErrors,
   async (req, res) => {
-    console.log("Method PATCH", req.params.id);
     try {
-      const { id } = req.params;
-      const data = await fs.readFile(DB, "utf-8");
-      const allTasks = JSON.parse(data);
+      const tasksCollection = await getTasksCollection();
 
-      const taskIndex = allTasks.tasks.findIndex((task) => task.id === id);
-      if (taskIndex === -1) {
-        return res.status(404).json({ error: "Task not found" });
-      }
+      const objectId = getObjectId(req.params.id, res);
+      if (!objectId) return;
 
-      if (allTasks.tasks[taskIndex].userId !== req.user.id) {
+      const result = await tasksCollection.findOneAndUpdate(
+        {
+          _id: objectId,
+          userId: req.user.id
+        },
+        [{
+          $set: {
+            completed: { $not: "$completed" }
+          }
+        }],
+        { returnDocument: 'after' }
+      );
+
+      if (!result) {
+        const taskExists = await tasksCollection.findOne({
+          _id: objectId
+        });
+
+        if (!taskExists) {
+          return res.status(404).json({ error: "Task not found" });
+        }
+
         return res.status(403).json({ error: "Access denied" });
       }
 
-      allTasks.tasks[taskIndex].completed =
-        !allTasks.tasks[taskIndex].completed;
-      await fs.writeFile(DB, JSON.stringify(allTasks, null, 2));
-
-      res.json(allTasks.tasks[taskIndex]);
+      res.json(result);
     } catch (error) {
       if (error.code === "ENOENT") {
         return res.status(404).json({ error: "Database file not found" });
@@ -744,31 +670,32 @@ app.patch(
  *             schema:
  *               $ref: '#/components/schemas/ErrorResponse'
  */
-app.delete(
-  "/tasks/:id",
-  auth,
-  validateDeleteTask,
-  handleValidationErrors,
+app.delete("/tasks/:id", auth, validateDeleteTask, handleValidationErrors,
   async (req, res) => {
-    console.log("Method DELETE", req.params.id);
     try {
-      const { id } = req.params;
+      const tasksCollection = await getTasksCollection();
 
-      const data = await fs.readFile(DB, "utf-8");
-      const allTasks = JSON.parse(data);
+      const objectId = getObjectId(req.params.id, res);
+      if (!objectId) return;
 
-      const taskToDelete = allTasks.tasks.find((task) => task.id === id);
-      if (!taskToDelete) {
-        return res.status(404).json({ error: "Task not found" });
-      }
+      const task = await tasksCollection.findOne({
+        _id: objectId,
+        userId: req.user.id
+      });
 
-      if (taskToDelete.userId !== req.user.id) {
+      if (!task) {
+        const taskExists = await tasksCollection.findOne({
+          _id: objectId
+        });
+
+        if (!taskExists) {
+          return res.status(404).json({ error: "Task not found" });
+        }
+
         return res.status(403).json({ error: "Access denied" });
       }
 
-      allTasks.tasks = allTasks.tasks.filter((task) => task.id !== id);
-
-      await fs.writeFile(DB, JSON.stringify(allTasks, null, 2));
+      await tasksCollection.deleteOne({ _id: objectId });
       res.json({ message: "Task deleted", id });
     } catch (error) {
       res.status(500).json({ error: "Failed to delete task" });
