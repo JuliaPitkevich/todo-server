@@ -1,20 +1,16 @@
-### Create file
-GET  http://localhost:5000/createFile
-
-### Delete file
-DELETE  http://localhost:5000/deleteFile
-
+@token = {{login.response.body.token}}
 
 ### Add user
 POST http://localhost:5000/registration
 Content-type: application/json
 
 {
+    "name": "Julie",
     "email": "test@gmail.com",
     "password": "123465678"
 }
 
-### Loogin
+### Login
 # @name login
 POST http://localhost:5000/login
 Content-type: application/json
@@ -24,16 +20,12 @@ Content-type: application/json
     "password": "123465678"
 }
 
-
-
-@token = {{login.response.body.token}}
-
-### Read file
-GET  http://localhost:5000/readFile
+### Get all tasks
+GET  http://localhost:5000/tasks
 Authorization: Bearer {{token}}
 
-### Write file
-POST  http://localhost:5000/changeFile
+### Add task
+POST  http://localhost:5000/tasks
 Authorization: Bearer {{token}}
 Content-Type: application/json
 
@@ -41,35 +33,26 @@ Content-Type: application/json
     "title": "Buy milk"
 }
 
-### Add another task
-POST http://localhost:5000/changeFile
+### Get task by Id
+GET http://localhost:5000/tasks/6a71f28d3bee35c80c0470a8
+Authorization: Bearer {{token}}
+
+
+### Change task
+PUT http://localhost:5000/tasks/6a71f28d3bee35c80c0470a8
 Authorization: Bearer {{token}}
 Content-Type: application/json
 
 {
-    "title": "Learn Sentry24525452"
+    "title": "Buy bio milk"
 }
 
-### get task by Id
-GET http://localhost:5000/tasks/82d9cbe8-1bda-420a-ab13-72678e49448b
-Authorization: Bearer {{token}}
-
-
-### Change title
-PUT http://localhost:5000/tasks/82d9cbe8-1bda-420a-ab13-72678e49448b
-Authorization: Bearer {{token}}
-Content-Type: application/json
-
-{
-    "title": "Buy organic milk"
-}
-
-### Toggle done
-PATCH http://localhost:5000/tasks/82d9cbe8-1bda-420a-ab13-72678e49448b
+### Toggle complete
+PATCH http://localhost:5000/tasks/6a71f28d3bee35c80c0470a8
 Authorization: Bearer {{token}}
 
 ### Delete task
-DELETE http://localhost:5000/tasks/82d9cbe8-1bda-420a-ab13-72678e49448b
+DELETE http://localhost:5000/tasks/6a71f28d3bee35c80c0470a8
 Authorization: Bearer {{token}}
 
 ### Test Sentry

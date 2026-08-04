@@ -1,4 +1,5 @@
 const { body, param, query, validationResult } = require('express-validator');
+const { getUsersCollection } = require('./db');
 
 // Валидация ID в params
 function taskId() {
@@ -27,6 +28,63 @@ function title({ optional = false } = {}) {
         .isLength({ min: 1 })
         .withMessage('title не может быть пустым');
 }
+
+function emailUnique() {
+    return body('email')
+        .notEmpty()
+        .withMessage('Email обязателен')
+        .isEmail()
+        .withMessage('Некорректный формат email')
+        .normalizeEmail()
+        .custom(async (email) => {
+            const users = await getUsersCollection();
+            const existingUser = await users.findOne({ email });
+            if (existingUser) {
+                throw new Error('Пользователь с таким email уже существует');
+            }
+            return true;
+        });
+}
+
+function emailExists() {
+    return body('email')
+        .notEmpty()
+        .withMessage('Email обязателен')
+        .isEmail()
+        .withMessage('Некорректный формат email')
+        .normalizeEmail()
+        .custom(async (email) => {
+            const users = await getUsersCollection();
+            const user = await users.findOne({ email });
+            if (!user) {
+                throw new Error('Пользователь с таким email не найден');
+            }
+            return true;
+        });
+}
+
+function validateRegistration() {
+    return [
+        emailUnique(),
+        body('password')
+            .notEmpty()
+            .withMessage('Пароль обязателен')
+            .isLength({ min: 6 })
+            .withMessage('Пароль должен содержать минимум 6 символов')
+            .isString()
+            .withMessage('Пароль должен быть строкой')
+    ];
+}
+
+function validateLogin() {
+    return [
+        emailExists(),
+        body('password')
+            .notEmpty()
+            .withMessage('Пароль обязателен')
+    ];
+}
+
 
 // Валидация для GET /readFile с query параметрами
 const validateGetTasks = [
@@ -102,5 +160,7 @@ module.exports = {
     validateGetTask,
     validateDeleteTask,
     validateGetTasks,
+    validateRegistration,
+    validateLogin,
     handleValidationErrors
 };
