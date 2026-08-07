@@ -696,7 +696,7 @@ app.delete("/tasks/:id", auth, validateDeleteTask, handleValidationErrors,
       }
 
       await tasksCollection.deleteOne({ _id: objectId });
-      res.json({ message: "Task deleted", id });
+      res.json({ message: "Task deleted", id: req.params.id });
     } catch (error) {
       res.status(500).json({ error: "Failed to delete task" });
     }
