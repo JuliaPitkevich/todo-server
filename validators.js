@@ -110,7 +110,6 @@ const validateGetTasks = [
         .optional()
         .isBoolean()
         .withMessage('completed в query должен быть true или false')
-        .toBoolean()
 ];
 
 // Валидация для POST /changeFile

@@ -73,24 +73,23 @@ function formatTask(task) {
 
 function auth(req, res, next) {
   if (!req.headers.authorization)
-    return res.status(401).json({ error: "Authorization header required" });
+    return res.status(401).json({ message: "Authorization header required" });
 
   const [scheme, token] = req.headers.authorization.split(" ");
 
   if (scheme !== "Bearer" || !token)
     return res
       .status(401)
-      .json({ error: "Invalid authorization format. Use Bearer token" });
+      .json({ message: "Invalid authorization format. Use Bearer token" });
 
   try {
     req.user = jwt.verify(token, SECRET, { algorithms: ["HS256"] });
-    console.log("User authenticated:", req.user.id);
     next();
   } catch (err) {
     const expired = err.name === "TokenExpiredError";
     res
       .status(401)
-      .json({ error: expired ? "Token is expired" : "Token is invalid" });
+      .json({ message: expired ? "Token is expired" : "Token is invalid" });
   }
 }
 
