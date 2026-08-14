@@ -41,9 +41,8 @@ const options = {
           properties: {
             id: {
               type: "string",
-              format: "uuid",
-              example: "123e4567-e89b-12d3-a456-426614174000",
-              description: "Уникальный идентификатор задачи",
+              example: "6a763758d2103f83b6232a81",
+              description: "MongoDB ObjectId (строка)",
             },
             userId: {
               type: "string",
@@ -56,6 +55,11 @@ const options = {
               example: "Buy milk",
               description: "Название задачи",
               minLength: 1,
+            },
+            description: {
+              type: "string",
+              example: "Organic milk from the store",
+              description: "Описание задачи (опционально)",
             },
             completed: {
               type: "boolean",
@@ -73,6 +77,17 @@ const options = {
               format: "date-time",
               example: "2026-07-25T06:17:12.883Z",
               description: "Дата последнего обновления задачи",
+            },
+          },
+        },
+        TodosDataResponse: {
+          type: "object",
+          properties: {
+            data: {
+              type: "array",
+              items: {
+                $ref: "#/components/schemas/Task",
+              },
             },
           },
         },
@@ -162,8 +177,13 @@ const options = {
         // Схемы для пользователей
         RegisterRequest: {
           type: "object",
-          required: ["email", "password"],
+          required: ["name", "email", "password"],
           properties: {
+            name: {
+              type: "string",
+              example: "John Doe",
+              description: "Имя пользователя",
+            },
             email: {
               type: "string",
               format: "email",
@@ -182,15 +202,10 @@ const options = {
         RegisterResponse: {
           type: "object",
           properties: {
-            id: {
+            access_token: {
               type: "string",
-              format: "uuid",
-              example: "123e4567-e89b-12d3-a456-426614174000",
-            },
-            email: {
-              type: "string",
-              format: "email",
-              example: "user@example.com",
+              example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+              description: "JWT токен для авторизации",
             },
           },
         },
@@ -213,7 +228,7 @@ const options = {
         LoginResponse: {
           type: "object",
           properties: {
-            token: {
+            access_token: {
               type: "string",
               example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
               description: "JWT токен для авторизации",

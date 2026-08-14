@@ -3,7 +3,10 @@ const { MongoClient } = require('mongodb');
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017';
 const DB_NAME = process.env.MONGODB_DB_NAME || 'lection_db';
 
-const client = new MongoClient(MONGODB_URI);
+const client = new MongoClient(MONGODB_URI, {
+    serverSelectionTimeoutMS: 10000,
+    connectTimeoutMS: 10000,
+});
 
 
 let dbConnection = null;

@@ -29,6 +29,16 @@ function title({ optional = false } = {}) {
         .withMessage('title не может быть пустым');
 }
 
+function description() {
+    return body('description')
+        .optional()
+        .isString()
+        .withMessage('description должен быть строкой')
+        .trim()
+        .isLength({ max: 500 })
+        .withMessage('description не может превышать 500 символов');
+}
+
 function emailUnique() {
     return body('email')
         .notEmpty()
@@ -65,6 +75,14 @@ function emailExists() {
 
 function validateRegistration() {
     return [
+        body('name')
+            .notEmpty()
+            .withMessage('Имя обязательно')
+            .isString()
+            .withMessage('Имя должно быть строкой')
+            .trim()
+            .isLength({ min: 1 })
+            .withMessage('Имя не может быть пустым'),
         emailUnique(),
         body('password')
             .notEmpty()
@@ -96,10 +114,49 @@ const validateGetTasks = [
 ];
 
 // Валидация для POST /changeFile
-const validateCreateTask = [title()];
+const validateCreateTask = [title(), description()];
 
 // Валидация для PUT /tasks/:id
-const validateReplaceTask = [taskId(), title()];
+const validateReplaceTask = [taskId(), title(), description()];
+
+// Валидация для PATCH /todos/:id (фронтенд-совместимый - title, description, completed)
+const validatePatchTodo = [
+    taskId(),
+
+    body().custom((value, { req }) => {
+        if (!req.body || Object.keys(req.body).length === 0) {
+            throw new Error('Тело запроса не может быть пустым');
+        }
+
+        const allowedFields = ['title', 'description', 'completed'];
+        const suppliedFields = Object.keys(req.body);
+
+        if (suppliedFields.some((field) => !allowedFields.includes(field))) {
+            throw new Error(`Разрешены только поля: ${allowedFields.join(', ')}.`);
+        }
+
+        return true;
+    }),
+    body('title')
+        .optional()
+        .isString()
+        .withMessage('title должен быть строкой')
+        .trim()
+        .isLength({ min: 1 })
+        .withMessage('title не может быть пустым'),
+    body('description')
+        .optional()
+        .isString()
+        .withMessage('description должен быть строкой')
+        .trim()
+        .isLength({ max: 500 })
+        .withMessage('description не может превышать 500 символов'),
+    body('completed')
+        .optional()
+        .isBoolean()
+        .withMessage('completed должен быть true или false')
+        .toBoolean()
+];
 
 // Валидация для PATCH /tasks/:id
 const validatePatchTask = [
@@ -157,6 +214,7 @@ module.exports = {
     validateCreateTask,
     validateReplaceTask,
     validatePatchTask,
+    validatePatchTodo,
     validateGetTask,
     validateDeleteTask,
     validateGetTasks,

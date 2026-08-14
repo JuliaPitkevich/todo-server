@@ -1,4 +1,4 @@
-require('dotenv').config();
+require('dotenv').config({ override: true });
 const Sentry = require("./instrument.js");
 const bcrypt = require("bcryptjs");
 const express = require("express");
@@ -20,6 +20,7 @@ const {
   validateCreateTask,
   validateReplaceTask,
   validatePatchTask,
+  validatePatchTodo,
   validateGetTask,
   validateDeleteTask,
   validateGetTasks,
@@ -64,6 +65,12 @@ function signToken(user) {
   });
 }
 
+function formatTask(task) {
+  if (!task) return null;
+  const { _id, ...rest } = task;
+  return { id: _id.toString(), ...rest };
+}
+
 function auth(req, res, next) {
   if (!req.headers.authorization)
     return res.status(401).json({ error: "Authorization header required" });
@@ -88,6 +95,532 @@ function auth(req, res, next) {
 }
 
 connectToDatabase().catch(console.error);
+
+// ============ Frontend-compatible routes ============
+
+/**
+ * @swagger
+ * /auth/register:
+ *   post:
+ *     summary: Регистрация нового пользователя
+ *     description: Создает нового пользователя с хешированным паролем и возвращает JWT токен
+ *     tags:
+ *       - Auth (Frontend)
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/RegisterRequest'
+ *     responses:
+ *       201:
+ *         description: Пользователь успешно зарегистрирован
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/RegisterResponse'
+ *       400:
+ *         description: Ошибка валидации или пользователь уже существует
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ValidationErrorResponse'
+ *       500:
+ *         description: Ошибка регистрации
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ */
+app.post('/auth/register', validateRegistration(), handleValidationErrors, async (req, res) => {
+  try {
+    const { name, email, password } = req.body;
+    const users = await getUsersCollection();
+
+    const user = {
+      id: randomUUID(),
+      name,
+      email,
+      password: await bcrypt.hash(password, 10),
+    };
+
+    await users.insertOne(user);
+    const token = signToken(user);
+    res.status(201).json({ access_token: token });
+  } catch (error) {
+    console.error('Registration error:', error);
+    res.status(500).json({ message: "Registration failed" });
+  }
+});
+
+// POST /auth/login - логин с возвратом access_token
+/**
+ * @swagger
+ * /auth/login:
+ *   post:
+ *     summary: Вход в систему
+ *     description: Аутентификация пользователя и получение JWT токена
+ *     tags:
+ *       - Auth (Frontend)
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/LoginRequest'
+ *     responses:
+ *       200:
+ *         description: Успешный вход
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/LoginResponse'
+ *       401:
+ *         description: Неверные учетные данные
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *       500:
+ *         description: Ошибка входа
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ */
+app.post('/auth/login', validateLogin(), handleValidationErrors, async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    const users = await getUsersCollection();
+    const user = await users.findOne({ email });
+
+    const pass = await bcrypt.compare(password, user.password);
+    if (!user || !pass) {
+      return res.status(401).json({ message: "Wrong email or password" });
+    }
+    const token = signToken(user);
+    res.json({ access_token: token });
+  } catch (error) {
+    console.error('Login error:', error);
+    res.status(500).json({ message: "Login failed" });
+  }
+});
+
+// GET /auth/me - получить текущего пользователя
+/**
+ * @swagger
+ * /auth/me:
+ *   get:
+ *     summary: Получить информацию о текущем пользователе
+ *     description: Возвращает имя и email текущего пользователя
+ *     tags:
+ *       - Auth (Frontend)
+ *     security:
+ *       - BearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Информация о пользователе
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 name:
+ *                   type: string
+ *                   example: "John Doe"
+ *                 email:
+ *                   type: string
+ *                   format: email
+ *                   example: "user@example.com"
+ *       401:
+ *         description: Не авторизован
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *       404:
+ *         description: Пользователь не найден
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ */
+app.get('/auth/me', auth, async (req, res) => {
+  try {
+    const users = await getUsersCollection();
+    const user = await users.findOne({ id: req.user.id });
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+    res.json({ name: user.name, email: user.email });
+  } catch (error) {
+    console.error('Get user error:', error);
+    res.status(500).json({ message: "Failed to get user" });
+  }
+});
+
+// GET /todos - получить все задачи
+/**
+ * @swagger
+ * /todos:
+ *   get:
+ *     summary: Получить все задачи пользователя
+ *     description: Возвращает список всех задач текущего пользователя
+ *     tags:
+ *       - Todos (Frontend)
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: completed
+ *         schema:
+ *           type: boolean
+ *         description: Фильтр по статусу выполнения (true/false)
+ *     responses:
+ *       200:
+ *         description: Список задач
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/TodosDataResponse'
+ *       401:
+ *         description: Не авторизован
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ */
+app.get('/todos', auth, validateGetTasks, handleValidationErrors, async (req, res) => {
+  try {
+    const tasksCollection = await getTasksCollection();
+    const filter = { userId: req.user.id };
+
+    if (req.query.completed !== undefined) {
+      filter.completed = req.query.completed === 'true';
+    }
+
+    const tasks = await tasksCollection.find(filter).toArray();
+    res.json({ data: tasks.map(formatTask) });
+  } catch (error) {
+    res.status(500).json({ message: "Failed to read tasks" });
+  }
+});
+
+// POST /todos - создать задачу
+/**
+ * @swagger
+ * /todos:
+ *   post:
+ *     summary: Создать новую задачу
+ *     description: Создает новую задачу для текущего пользователя
+ *     tags:
+ *       - Todos (Frontend)
+ *     security:
+ *       - BearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - title
+ *             properties:
+ *               title:
+ *                 type: string
+ *                 example: Buy milk
+ *               description:
+ *                 type: string
+ *                 example: Organic milk from the store
+ *     responses:
+ *       201:
+ *         description: Задача создана
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Task'
+ *       400:
+ *         description: Ошибка валидации
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ValidationErrorResponse'
+ *       401:
+ *         description: Не авторизован
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ */
+app.post('/todos', auth, validateCreateTask, handleValidationErrors, async (req, res) => {
+  try {
+    const { title, description } = req.body;
+    const tasksCollection = await getTasksCollection();
+    const newTask = {
+      userId: req.user.id,
+      title: title.trim(),
+      description: description ? description.trim() : '',
+      completed: false
+    };
+
+    const result = await tasksCollection.insertOne(newTask);
+    res.status(201).json(formatTask({ _id: result.insertedId, ...newTask }));
+  } catch (error) {
+    res.status(500).json({ message: "Failed to create task" });
+  }
+});
+
+// GET /todos/:id - получить задачу по ID
+/**
+ * @swagger
+ * /todos/{id}:
+ *   get:
+ *     summary: Получить задачу по ID
+ *     description: Возвращает задачу по ID, если она принадлежит текущему пользователю
+ *     tags:
+ *       - Todos (Frontend)
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: MongoDB ObjectId задачи
+ *     responses:
+ *       200:
+ *         description: Задача найдена
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Task'
+ *       401:
+ *         description: Не авторизован
+ *       403:
+ *         description: Доступ запрещен
+ *       404:
+ *         description: Задача не найдена
+ */
+app.get('/todos/:id', auth, validateGetTask, handleValidationErrors, async (req, res) => {
+  try {
+    const tasksCollection = await getTasksCollection();
+    const objectId = getObjectId(req.params.id, res);
+    if (!objectId) return;
+
+    const task = await tasksCollection.findOne({
+      _id: objectId,
+      userId: req.user.id
+    });
+
+    if (!task) {
+      return res.status(404).json({ message: "Task not found" });
+    }
+
+    res.json(formatTask(task));
+  } catch (error) {
+    res.status(500).json({ message: "Failed to read task" });
+  }
+});
+
+// PATCH /todos/:id - обновить задачу
+/**
+ * @swagger
+ * /todos/{id}:
+ *   patch:
+ *     summary: Обновить задачу
+ *     description: Обновляет поля задачи (title, description, completed)
+ *     tags:
+ *       - Todos (Frontend)
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: MongoDB ObjectId задачи
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               title:
+ *                 type: string
+ *                 example: Buy organic milk
+ *               description:
+ *                 type: string
+ *                 example: Updated description
+ *               completed:
+ *                 type: boolean
+ *                 example: true
+ *     responses:
+ *       200:
+ *         description: Задача обновлена
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Task'
+ *       400:
+ *         description: Ошибка валидации
+ *       401:
+ *         description: Не авторизован
+ *       403:
+ *         description: Доступ запрещен
+ *       404:
+ *         description: Задача не найдена
+ */
+app.patch('/todos/:id', auth, validatePatchTodo, handleValidationErrors, async (req, res) => {
+  try {
+    const tasksCollection = await getTasksCollection();
+    const objectId = getObjectId(req.params.id, res);
+    if (!objectId) return;
+
+    const updateFields = {};
+    if (req.body.title !== undefined) updateFields.title = req.body.title.trim();
+    if (req.body.description !== undefined) updateFields.description = req.body.description.trim();
+    if (req.body.completed !== undefined) updateFields.completed = req.body.completed;
+
+    const result = await tasksCollection.findOneAndUpdate(
+      { _id: objectId, userId: req.user.id },
+      { $set: updateFields },
+      { returnDocument: 'after' }
+    );
+
+    if (!result) {
+      const taskExists = await tasksCollection.findOne({ _id: objectId });
+      if (!taskExists) {
+        return res.status(404).json({ message: "Task not found" });
+      }
+      return res.status(403).json({ message: "Access denied" });
+    }
+
+    res.json(formatTask(result));
+  } catch (error) {
+    res.status(500).json({ message: "Failed to update task" });
+  }
+});
+
+// PATCH /todos/:id/toggle - переключить статус задачи
+/**
+ * @swagger
+ * /todos/{id}/toggle:
+ *   patch:
+ *     summary: Переключить статус задачи
+ *     description: Переключает статус completed задачи (true/false)
+ *     tags:
+ *       - Todos (Frontend)
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: MongoDB ObjectId задачи
+ *     responses:
+ *       200:
+ *         description: Статус задачи обновлен
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Task'
+ *       401:
+ *         description: Не авторизован
+ *       403:
+ *         description: Доступ запрещен
+ *       404:
+ *         description: Задача не найдена
+ */
+app.patch('/todos/:id/toggle', auth, validateGetTask, handleValidationErrors, async (req, res) => {
+  try {
+    const tasksCollection = await getTasksCollection();
+    const objectId = getObjectId(req.params.id, res);
+    if (!objectId) return;
+
+    const result = await tasksCollection.findOneAndUpdate(
+      { _id: objectId, userId: req.user.id },
+      [{ $set: { completed: { $not: "$completed" } } }],
+      { returnDocument: 'after' }
+    );
+
+    if (!result) {
+      const taskExists = await tasksCollection.findOne({ _id: objectId });
+      if (!taskExists) {
+        return res.status(404).json({ message: "Task not found" });
+      }
+      return res.status(403).json({ message: "Access denied" });
+    }
+
+    res.json(formatTask(result));
+  } catch (error) {
+    res.status(500).json({ message: "Failed to toggle task" });
+  }
+});
+
+// DELETE /todos/:id - удалить задачу
+/**
+ * @swagger
+ * /todos/{id}:
+ *   delete:
+ *     summary: Удалить задачу
+ *     description: Удаляет задачу по ID, если она принадлежит текущему пользователю
+ *     tags:
+ *       - Todos (Frontend)
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: MongoDB ObjectId задачи
+ *     responses:
+ *       200:
+ *         description: Задача удалена
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/DeleteResponse'
+ *       401:
+ *         description: Не авторизован
+ *       403:
+ *         description: Доступ запрещен
+ *       404:
+ *         description: Задача не найдена
+ */
+app.delete('/todos/:id', auth, validateDeleteTask, handleValidationErrors, async (req, res) => {
+  try {
+    const tasksCollection = await getTasksCollection();
+    const objectId = getObjectId(req.params.id, res);
+    if (!objectId) return;
+
+    const task = await tasksCollection.findOne({
+      _id: objectId,
+      userId: req.user.id
+    });
+
+    if (!task) {
+      const taskExists = await tasksCollection.findOne({ _id: objectId });
+      if (!taskExists) {
+        return res.status(404).json({ message: "Task not found" });
+      }
+      return res.status(403).json({ message: "Access denied" });
+    }
+
+    await tasksCollection.deleteOne({ _id: objectId });
+    res.json({ message: "Task deleted", id: req.params.id });
+  } catch (error) {
+    res.status(500).json({ message: "Failed to delete task" });
+  }
+});
+
+// ============ End of frontend-compatible routes ============
 
 /**
  * @swagger
