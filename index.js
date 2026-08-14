@@ -193,8 +193,7 @@ app.post('/auth/login', validateLogin(), handleValidationErrors, async (req, res
     const users = await getUsersCollection();
     const user = await users.findOne({ email });
 
-    const pass = await bcrypt.compare(password, user.password);
-    if (!user || !pass) {
+    if (!user || !(await bcrypt.compare(password, user.password))) {
       return res.status(401).json({ message: "Wrong email or password" });
     }
     const token = signToken(user);
@@ -716,9 +715,7 @@ app.post("/login", validateLogin(), handleValidationErrors, async (req, res) => 
     const users = await getUsersCollection();
     const user = await users.findOne({ email });
 
-    const pass = await bcrypt.compare(password, user.password);
-
-    if (!user || !pass)
+    if (!user || !(await bcrypt.compare(password, user.password)))
       return res.status(401).json({ error: "Wrong email or password" });
     res.json({ token: signToken(user) });
   } catch (error) {

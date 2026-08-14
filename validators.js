@@ -96,7 +96,12 @@ function validateRegistration() {
 
 function validateLogin() {
     return [
-        emailExists(),
+        body('email')
+            .notEmpty()
+            .withMessage('Email обязателен')
+            .isEmail()
+            .withMessage('Некорректный формат email')
+            .normalizeEmail(),
         body('password')
             .notEmpty()
             .withMessage('Пароль обязателен')
